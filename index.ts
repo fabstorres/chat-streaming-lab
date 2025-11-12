@@ -1,5 +1,12 @@
 import { OpenAI } from "openai/client.js";
 
+type WebSocketData = {
+  room: string;
+  id: string;
+};
+
+type ChatClient = Bun.ServerWebSocket<WebSocketData>;
+
 const client = new OpenAI({ apiKey: Bun.env.OPEN_AI_API_KEY! });
 
 class Chat {
@@ -14,7 +21,7 @@ class Chat {
     this.error = null;
   }
 
-  async streamChat(ws: Bun.ServerWebSocket<undefined>, prompt: string) {
+  async streamChat(clients: ChatClient[], prompt: string) {
     if (this.status === "in-progress") return;
 
     this.currentResponse = "";
@@ -34,56 +41,62 @@ class Chat {
     try {
       for await (const event of stream) {
         if (event.type === "response.created") {
-          ws.send(
-            JSON.stringify({
-              type: "response.server.created",
-            })
-          );
+          clients.forEach((ws) => {
+            ws.send(
+              JSON.stringify({
+                type: "response.server.created",
+              })
+            );
+          });
         }
         if (event.type === "response.output_text.delta") {
           this.currentResponse += event.delta;
-          ws.send(
-            JSON.stringify({
-              type: "response.server.delta",
-              delta: event.delta,
-            })
-          );
+          clients.forEach((ws) => {
+            ws.send(
+              JSON.stringify({
+                type: "response.server.delta",
+                delta: event.delta,
+              })
+            );
+          });
         }
         if (event.type === "response.completed") {
-          this.status = "done";
-          ws.send(
-            JSON.stringify({
-              type: "response.server.done",
-            })
-          );
+          break;
         }
         if (event.type === "error") {
           this.status = "error";
-          ws.send(
-            JSON.stringify({
-              type: "response.server.error",
-              error: event.message,
-            })
-          );
+          clients.forEach((ws) => {
+            ws.send(
+              JSON.stringify({
+                type: "response.server.error",
+                error: event.message,
+              })
+            );
+          });
+
           break;
         }
       }
     } catch (err) {
       if (err instanceof Error) {
-        ws.send(
-          JSON.stringify({
-            type: "response.server.error",
-            error: err.message,
-          })
-        );
+        clients.forEach((ws) => {
+          ws.send(
+            JSON.stringify({
+              type: "response.server.error",
+              error: err.message,
+            })
+          );
+        });
       }
     } finally {
       this.status = "done";
-      ws.send(
-        JSON.stringify({
-          type: "response.server.done",
-        })
-      );
+      clients.forEach((ws) => {
+        ws.send(
+          JSON.stringify({
+            type: "response.server.done",
+          })
+        );
+      });
     }
   }
 }
@@ -123,21 +136,38 @@ type ChatEvent =
   | ServerCreatedEvent
   | ServerDoneEvent;
 
-const chat = new Chat();
+class Room {
+  clients: ChatClient[];
+  chat: Chat;
+  constructor() {
+    this.clients = [];
+    this.chat = new Chat();
+  }
+}
 
-const server = Bun.serve({
+const rooms: Record<string, Room> = {};
+
+const server = Bun.serve<WebSocketData>({
   port: 3000,
   development: true,
   fetch(req, server) {
-    if (server.upgrade(req)) {
+    const room = new URL(req.url).searchParams.get("room");
+    if (
+      room &&
+      server.upgrade(req, { data: { room, id: crypto.randomUUID() } })
+    ) {
       return;
     }
     return new Response("Failed request", { status: 500 });
   },
   websocket: {
     open: (ws) => {
-      ws.send("Welcome user!");
-      console.log("Client connected");
+      ws.send(`Welcome user ${ws.data.id} to room ${ws.data.room}!`);
+      if (!(ws.data.room in rooms)) {
+        rooms[ws.data.room] = new Room();
+      }
+      rooms[ws.data.room]!.clients.push(ws);
+      console.log(`Client ${ws.data.id} connected`);
     },
     message: (ws, message) => {
       const data =
@@ -148,15 +178,25 @@ const server = Bun.serve({
       console.log("Client sent message", event);
 
       if (event.type === "response.user.message") {
-        chat.streamChat(ws, event.message);
+        const room = rooms[ws.data.room];
+        if (!room) return;
+        room.chat.streamChat(room.clients, event.message);
       }
       if (event.type === "response.user.abort") {
-        if (chat.status === "in-progress") {
-          chat.abortController!.abort();
+        const room = rooms[ws.data.room];
+        if (!room) return;
+        if (room.chat.status === "in-progress") {
+          room.chat.abortController!.abort();
         }
       }
     },
     close: (ws) => {
+      const room = rooms[ws.data.room];
+      if (!room) return;
+      room.clients = room.clients.filter(
+        (client) => client.data.room != ws.data.room
+      );
+      rooms[ws.data.room];
       console.log("Client disconnected");
     },
   },
