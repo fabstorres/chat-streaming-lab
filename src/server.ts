@@ -71,7 +71,9 @@ const server = Bun.serve<WebSocketData>({
       switch (event.type) {
         case "response.user.sync":
           const room = rooms.get(ws.data.room);
-          const sequence = room.chat.getServerSequence();
+          const sequence =
+            rooms.withRoom(ws.data.room, (r) => r.chat.getServerSequence()) ??
+            -1;
           if (
             event.last_known_sequence < 0 ||
             event.last_known_sequence > sequence
@@ -79,19 +81,21 @@ const server = Bun.serve<WebSocketData>({
             ws.send(
               JSON.stringify({
                 type: "response.server.bad_request",
-                error: "Invalid event sequence",
+                error: "Invalid sync request",
                 original_type: event.type,
               })
             );
             break;
           }
-          room.chat.sendSyncEvent(ws, event.last_known_sequence);
+          rooms.withRoom(ws.data.room, (r) =>
+            r.chat.sendSyncEvent(ws, event.last_known_sequence)
+          );
           break;
         case "response.user.message":
-          rooms.get(ws.data.room).startRun(event.message);
+          rooms.withRoom(ws.data.room, (r) => r.startRun(event.message));
           break;
         case "response.user.abort":
-          rooms.get(ws.data.room).abort();
+          rooms.withRoom(ws.data.room, (r) => r.abort());
           break;
       }
     },

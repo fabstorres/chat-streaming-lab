@@ -88,6 +88,10 @@ bun run src/server.ts
 
 This project was created using `bun init` in bun v1.3.2. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
 
+## TODO
+
+- Add testing to the server and create a small client.
+
 ## License
 
 [MIT](https://github.com/fabstorres/chat-streaming-lab/blob/main/LICENSE)

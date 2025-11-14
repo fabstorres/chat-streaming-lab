@@ -7,13 +7,11 @@ import type { ChatClient } from "../server/types";
 export class Room {
   readonly id: string;
   private clients: ChatClient[] = [];
-  private broadcaster: Broadcaster;
   readonly chat: Chat;
 
   constructor(id: string) {
     this.id = id;
     this.chat = new Chat();
-    this.broadcaster = makeBroadcaster(this.clients);
   }
 
   join(ws: ChatClient) {
