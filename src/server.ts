@@ -33,7 +33,6 @@ const server = Bun.serve<WebSocketData>({
       rooms.deleteIfEmpty(ws.data.room);
     },
     message(ws, data) {
-      const room = rooms.get(ws.data.room);
       const str =
         typeof data === "string" ? data : new TextDecoder().decode(data);
       const parsedJSON = (() => {
@@ -47,8 +46,9 @@ const server = Bun.serve<WebSocketData>({
       if (!parsedJSON) {
         ws.send(
           JSON.stringify({
-            type: "response.server.error",
+            type: "response.server.bad_request",
             error: "Invalid JSON",
+            original_type: "unknown",
           })
         );
         return;
@@ -58,8 +58,9 @@ const server = Bun.serve<WebSocketData>({
       if (!result.success) {
         ws.send(
           JSON.stringify({
-            type: "response.server.error",
+            type: "response.server.bad_request",
             error: "Invalid event payload",
+            original_type: parsedJSON["type"] ?? "unknown",
           })
         );
         return;
@@ -68,6 +69,24 @@ const server = Bun.serve<WebSocketData>({
       const event = result.data;
 
       switch (event.type) {
+        case "response.user.sync":
+          const room = rooms.get(ws.data.room);
+          const sequence = room.chat.getServerSequence();
+          if (
+            event.last_known_sequence < 0 ||
+            event.last_known_sequence > sequence
+          ) {
+            ws.send(
+              JSON.stringify({
+                type: "response.server.bad_request",
+                error: "Invalid event sequence",
+                original_type: event.type,
+              })
+            );
+            break;
+          }
+          room.chat.sendSyncEvent(ws, event.last_known_sequence);
+          break;
         case "response.user.message":
           rooms.get(ws.data.room).startRun(event.message);
           break;

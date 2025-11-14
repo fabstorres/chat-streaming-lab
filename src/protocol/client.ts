@@ -8,6 +8,10 @@ export const ClientToServerSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("response.user.abort"),
   }),
+  z.object({
+    type: z.literal("response.user.sync"),
+    last_known_sequence: z.number(),
+  }),
 ]);
 
 export type ClientToServerEvent = z.infer<typeof ClientToServerSchema>;
