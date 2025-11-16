@@ -161,5 +161,7 @@ export class ChatServer {
 }
 
 
-const server = new ChatServer();
-server.start();
+if (require.main === module && process.env.NODE_ENV !== "test") {
+  const server = new ChatServer();
+  server.start();
+}
